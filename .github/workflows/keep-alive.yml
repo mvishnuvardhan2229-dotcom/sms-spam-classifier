@@ -1,0 +1,81 @@
+
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    - cron: "0 */10 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wake-up-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright and Chromium
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Open Streamlit and Wake App
+        env:
+          APP_URL: ${{ secrets.STREAMLIT_URL }}
+        run: |
+          python - <<'PY'
+          import os
+          from playwright.sync_api import sync_playwright, TimeoutError
+
+          url = os.environ.get("APP_URL", "").strip()
+          if not url.startswith("https://"):
+              raise ValueError("STREAMLIT_URL secret is missing or invalid")
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True)
+              page = browser.new_page()
+              try:
+                  print("Opening Streamlit app...")
+                  response = page.goto(
+                      url,
+                      wait_until="domcontentloaded",
+                      timeout=90000
+                  )
+
+                  if response:
+                      print(f"Initial HTTP status: {response.status}")
+
+                  wake_button = page.get_by_role(
+                      "button",
+                      name="Yes, get this app back up!",
+                      exact=True
+                  )
+
+                  try:
+                      wake_button.wait_for(
+                          state="visible",
+                          timeout=20000
+                      )
+                      print("Sleep screen detected. Clicking wake button...")
+                      wake_button.click(timeout=15000)
+
+                      page.wait_for_timeout(15000)
+                      print("Wake button clicked.")
+                  except TimeoutError:
+                      print("Wake button not detected.")
+                      print("App may already be active, or the page changed.")
+
+                  print(f"Final page URL: {page.url}")
+                  print(f"Page title: {page.title()}")
+                  print("Browser check completed.")
+
+              finally:
+                  browser.close()
+          PY
